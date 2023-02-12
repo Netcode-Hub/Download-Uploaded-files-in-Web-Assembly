@@ -1,0 +1,112 @@
+﻿@page "/"
+@using System.Net.Http.Headers;
+@using ORMExplained.Server.Models;
+@inject HttpClient httpClient
+@inject IJSRuntime JS
+
+<PageTitle>Index</PageTitle>
+
+<h1>Upload Files</h1>
+
+
+<InputFile OnChange="OnInputChange" multiple />
+<hr />
+
+<table>
+    <thead>
+        <tr>
+            <th>File Name</th>
+            <th>Stored Name</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        @if (fileNames.Count > 0)
+        {
+            @foreach (var fileName in fileNames)
+            {
+                <tr>
+                    <td> @fileName </td>
+                    <td>@GetStoredFileName(fileName)</td>
+                    <td>
+                        <button @onclick="(() => DownloadFile(GetStoredFileName(fileName),fileName))" class="btn btn-primary">
+                            Download
+                        </button>
+                    </td>
+                </tr>
+            }
+        }
+    </tbody>
+</table>
+
+@code
+{
+    private List<string> fileNames = new();
+    private long maxFileSize = long.MaxValue;
+    private int maxAllowedFiles = int.MaxValue;
+    private List<UploadResult> uploadResults = new();
+
+    private async Task OnInputChange(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            using var content = new MultipartFormDataContent();
+            foreach (var file in e.GetMultipleFiles(maxAllowedFiles))
+            {
+                var fileContent = new StreamContent(file.OpenReadStream(maxFileSize));
+                fileContent.Headers.ContentType = new MediaTypeHeaderValue(file.ContentType);
+                fileNames.Add(file.Name);
+                content.Add(
+                    content: fileContent,
+                    name: "\"files\"",
+                    fileName: file.Name
+                );
+            }
+
+            var response = await httpClient.PostAsync("/api/File", content);
+            var newUploadResults = await response.Content.ReadFromJsonAsync<List<UploadResult>>();
+
+            if (newUploadResults is not null)
+            {
+                uploadResults = uploadResults.Concat(newUploadResults).ToList();
+            }
+        }
+        catch (Exception)
+        {
+
+            throw;
+        }
+
+    }
+
+
+    private string? GetStoredFileName(string fileName)
+    {
+        var uploadResult = uploadResults.SingleOrDefault(f => f.FileName == fileName);
+        if (uploadResult is not null)
+        {
+            return uploadResult.StoredFileName;
+        }
+        else
+        {
+            return "File not found";
+        }
+    }
+
+
+    private async Task DownloadFile(string storedFileName, string originalFileName)
+    {
+        var response = await httpClient.GetAsync($"/api/File/{storedFileName}");
+        if (!response.IsSuccessStatusCode)
+        {
+            await JS.InvokeVoidAsync("alert", "File not found");
+        }
+        else
+        {
+            var fileStream = response.Content.ReadAsStream();
+            using var streamRef = new DotNetStreamReference(stream: fileStream);
+
+            await JS.InvokeVoidAsync("downloadFileFromStream", originalFileName, streamRef);
+        }
+    }
+}
